@@ -294,15 +294,8 @@
           </div>
           <div class="form-row" style="margin-top:12px">
             <div class="form-group">
-              <label class="form-label">每月投入日</label>
-              <select class="form-input" id="dca-day">
-                <option value="1">每月 1 日</option>
-                <option value="5">每月 5 日</option>
-                <option value="10">每月 10 日</option>
-                <option value="15" selected>每月 15 日</option>
-                <option value="20">每月 20 日</option>
-                <option value="25">每月 25 日</option>
-              </select>
+              <label class="form-label">每月投入日（1~28）</label>
+              <input class="form-input" id="dca-day" type="number" min="1" max="28" value="15" placeholder="如 15">
             </div>
             <div class="form-group" style="display:flex;align-items:flex-end">
               <button class="btn btn-gold" style="width:100%" onclick="runDCA()">📈 計算</button>
@@ -318,6 +311,7 @@
             <div class="dca-stat"><div class="dca-stat-label">損益</div><div class="dca-stat-val" id="dca-pnl">—</div></div>
             <div class="dca-stat"><div class="dca-stat-label">報酬率</div><div class="dca-stat-val" id="dca-return">—</div></div>
           </div>
+          <div id="dca-mode-badge" style="display:none;margin-bottom:4px;font-family:var(--ff-mono);font-size:11px;color:var(--text-lo)"></div>
           <div class="chart-block" style="padding:12px;min-height:200px">
             <canvas id="dca-canvas"></canvas>
           </div>
@@ -1516,109 +1510,227 @@ async function runCompare() {
 // ============================================================
 let dcaChartInstance = null;
 async function runDCA() {
-  const symbol  = document.getElementById('dca-symbol').value.trim() || '0050.TW';
+  const symbol  = (document.getElementById('dca-symbol').value.trim() || '0050.TW').toUpperCase();
   const monthly = +(document.getElementById('dca-monthly').value) || 10000;
   const startStr= document.getElementById('dca-start').value;
-  const day     = +(document.getElementById('dca-day').value) || 15;
+  let   day     = parseInt(document.getElementById('dca-day').value, 10);
 
-  if (!startStr) { alert('請選擇開始日期'); return; }
+  if (!startStr) { alert('請填入開始日期'); return; }
+  if (isNaN(day) || day < 1 || day > 28) { alert('每月投入日請填入 1～28 之間的數字'); return; }
 
-  // Build monthly buy dates
   const start = new Date(startStr);
   const today = new Date();
-  const buyDates = [];
+  today.setHours(23, 59, 59, 999);
+
+  // ── Build ALL monthly dates from start to 12 months in the future ──
+  // Split into: pastDates (already happened) and futureDates (not yet)
+  const allDates   = [];
   let cur = new Date(start.getFullYear(), start.getMonth(), day);
-  if (cur < start) cur.setMonth(cur.getMonth() + 1);
-  while (cur <= today) {
-    buyDates.push(new Date(cur));
+  if (cur < start) cur.setMonth(cur.getMonth() + 1); // skip if day already passed before startStr
+
+  const horizon = new Date(today);
+  horizon.setMonth(horizon.getMonth() + 12); // show up to 12 months ahead in projection
+
+  while (cur <= horizon) {
+    allDates.push(new Date(cur));
     cur.setMonth(cur.getMonth() + 1);
   }
-  if (!buyDates.length) { alert('沒有符合條件的買入日期'); return; }
 
-  // Fetch full history
-  const startTs = Math.floor(start.getTime()/1000);
-  const endTs   = Math.floor(today.getTime()/1000);
-  let histData;
+  if (!allDates.length) { alert('找不到任何買入日期，請調整起始日期或投入日'); return; }
+
+  const pastDates   = allDates.filter(d => d <= today);
+  const futureDates = allDates.filter(d => d > today);
+  const hasPast     = pastDates.length > 0;
+  const hasFuture   = futureDates.length > 0;
+
+  // ── Show loading state on button ──
+  const calcBtn = document.querySelector('#tool-dca .btn-gold');
+  if (calcBtn) { calcBtn.textContent = '⏳ 計算中…'; calcBtn.disabled = true; }
+
+  // ── Fetch historical data ──
+  // Always fetch enough history: from start back 3 months (to find first close) to today
+  const fetchStart = new Date(start);
+  fetchStart.setMonth(fetchStart.getMonth() - 1); // 1 month before start for safety
+  const startTs = Math.floor(fetchStart.getTime() / 1000);
+  const endTs   = Math.floor(today.getTime() / 1000);
+
+  let histData = [];
   try {
     const url  = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?period1=${startTs}&period2=${endTs}&interval=1d`;
     const data = await yahooFetch(url);
     const ts     = data?.chart?.result?.[0]?.timestamp;
     const closes = data?.chart?.result?.[0]?.indicators?.quote?.[0]?.close;
-    if (!ts) throw new Error('no data');
-    histData = ts.map((t,i) => ({ date: new Date(t*1000), close: closes[i] })).filter(x => x.close);
+    if (!ts || !closes) throw new Error('no data');
+    histData = ts
+      .map((t, i) => ({ date: new Date(t * 1000), close: closes[i] }))
+      .filter(x => x.close != null && x.close > 0);
   } catch(e) {
-    alert('無法抓取歷史資料，請確認代碼'); return;
+    if (calcBtn) { calcBtn.textContent = '📈 計算'; calcBtn.disabled = false; }
+    alert(`無法抓取 ${symbol} 的歷史資料，請確認代碼是否正確\n（如台股加 .TW，如 0050.TW）`);
+    return;
   }
 
-  // Match each buy date to closest trading day close
+  // Latest known price
+  const latestPrice = histData.length ? histData[histData.length - 1].close : null;
+
+  if (!latestPrice) {
+    if (calcBtn) { calcBtn.textContent = '📈 計算'; calcBtn.disabled = false; }
+    alert('取得到的歷史資料中沒有有效股價，請確認代碼');
+    return;
+  }
+
+  // ── Find closest historical trading day close ──
   function closestClose(dt) {
+    if (!histData.length) return null;
+    // Only look within ±7 days of the target date
     let best = null, bestDiff = Infinity;
     histData.forEach(x => {
       const diff = Math.abs(x.date - dt);
-      if (diff < bestDiff) { bestDiff = diff; best = x; }
+      if (diff < bestDiff && diff < 7 * 86400 * 1000) { bestDiff = diff; best = x; }
     });
+    // If nothing within 7 days, use the latest available before that date
+    if (!best) {
+      const before = histData.filter(x => x.date <= dt);
+      best = before.length ? before[before.length - 1] : histData[0];
+    }
     return best?.close ?? null;
   }
 
+  // ── Process past buy dates (real historical prices) ──
   let totalCost = 0, totalShares = 0;
-  const cumulCost = [], cumulShares = [], cumulVal = [];
-  const dateLabels = [];
+  const cumulCost = [], cumulShares = [], cumulVal = [], dateLabels = [], isFuture = [];
 
-  buyDates.forEach(dt => {
+  pastDates.forEach(dt => {
     const price = closestClose(dt);
-    if (!price || price <= 0) return;
+    if (!price) return;
     const shares = monthly / price;
     totalCost   += monthly;
     totalShares += shares;
     cumulCost.push(totalCost);
     cumulShares.push(totalShares);
-    cumulVal.push(totalShares * price);
-    dateLabels.push(`${dt.getFullYear()}/${dt.getMonth()+1}`);
+    cumulVal.push(totalShares * latestPrice); // current valuation of past shares
+    dateLabels.push(`${dt.getFullYear()}/${String(dt.getMonth()+1).padStart(2,'0')}`);
+    isFuture.push(false);
   });
 
-  const currentPrice = histData[histData.length-1]?.close || 0;
-  const currentVal   = totalShares * currentPrice;
-  const avgCost      = totalShares > 0 ? totalCost / totalShares : 0;
-  const pnl          = currentVal - totalCost;
-  const ret          = totalCost > 0 ? (pnl/totalCost)*100 : 0;
+  // ── Process future dates (projected, use latest price) ──
+  let projCost = totalCost, projShares = totalShares;
+  futureDates.forEach(dt => {
+    const shares = monthly / latestPrice; // assume price stays same for projection
+    projCost   += monthly;
+    projShares += shares;
+    cumulCost.push(projCost);
+    cumulShares.push(projShares);
+    cumulVal.push(projShares * latestPrice);
+    dateLabels.push(`${dt.getFullYear()}/${String(dt.getMonth()+1).padStart(2,'0')} ★`);
+    isFuture.push(true);
+  });
 
-  // Update summary cards
+  // ── Current portfolio metrics ──
+  const currentVal = totalShares * latestPrice;
+  const avgCost    = totalShares > 0 ? totalCost / totalShares : 0;
+  const pnl        = currentVal - totalCost;
+  const ret        = totalCost > 0 ? (pnl / totalCost) * 100 : 0;
+
+  // ── Update summary cards ──
+  const modeBadge = document.getElementById('dca-mode-badge');
+  const modeLines = [];
+  if (hasPast)   modeLines.push(`📅 已執行 ${pastDates.length} 次買入`);
+  if (hasFuture) modeLines.push(`🔮 預測未來 ${futureDates.length} 次（★ 標示 = 預測，以現價 NT$${latestPrice.toFixed(2)} 試算）`);
+  modeBadge.textContent = modeLines.join('　|　');
+  modeBadge.style.display = 'block';
+
   document.getElementById('dca-summary').style.display = 'grid';
-  document.getElementById('dca-total-cost').textContent  = `NT$ ${totalCost.toLocaleString('zh-TW',{maximumFractionDigits:0})}`;
-  document.getElementById('dca-avg-cost').textContent    = `NT$ ${avgCost.toFixed(2)}`;
-  document.getElementById('dca-total-shares').textContent= totalShares.toFixed(2) + ' 股';
-  document.getElementById('dca-current-val').textContent = `NT$ ${currentVal.toLocaleString('zh-TW',{maximumFractionDigits:0})}`;
-  const pnlEl = document.getElementById('dca-pnl');
-  pnlEl.textContent = `${pnl>=0?'+':''}NT$ ${Math.abs(pnl).toLocaleString('zh-TW',{maximumFractionDigits:0})}`;
-  pnlEl.className = `dca-stat-val ${pnl>=0?'up':'down'}`;
-  const retEl = document.getElementById('dca-return');
-  retEl.textContent = `${ret>=0?'+':''}${ret.toFixed(2)}%`;
-  retEl.className = `dca-stat-val ${ret>=0?'up':'down'}`;
 
-  // Chart
+  const fmtNT = n => `NT$ ${n.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`;
+
+  document.getElementById('dca-total-cost').textContent   = fmtNT(hasPast ? totalCost : projCost);
+  document.getElementById('dca-avg-cost').textContent     = `NT$ ${avgCost > 0 ? avgCost.toFixed(2) : latestPrice.toFixed(2)}`;
+  document.getElementById('dca-total-shares').textContent = `${(hasPast ? totalShares : projShares).toFixed(2)} 股`;
+  document.getElementById('dca-current-val').textContent  = fmtNT(hasPast ? currentVal : projShares * latestPrice);
+
+  const pnlEl = document.getElementById('dca-pnl');
+  const retEl = document.getElementById('dca-return');
+  if (hasPast && totalCost > 0) {
+    pnlEl.textContent = `${pnl >= 0 ? '+' : ''}${fmtNT(pnl)}`;
+    pnlEl.className   = `dca-stat-val ${pnl >= 0 ? 'up' : 'down'}`;
+    retEl.textContent = `${ret >= 0 ? '+' : ''}${ret.toFixed(2)}%`;
+    retEl.className   = `dca-stat-val ${ret >= 0 ? 'up' : 'down'}`;
+  } else {
+    pnlEl.textContent = '預測模式'; pnlEl.className = 'dca-stat-val';
+    retEl.textContent = '—';       retEl.className = 'dca-stat-val';
+  }
+
+  // ── Chart ──
   const ctx = document.getElementById('dca-canvas').getContext('2d');
   if (dcaChartInstance) { dcaChartInstance.destroy(); dcaChartInstance = null; }
+
+  // Point colors: past = solid blue, future = dashed gold
+  const ptColors = isFuture.map(f => f ? 'rgba(200,168,75,0.85)' : 'rgba(26,120,255,0.85)');
+
   dcaChartInstance = new Chart(ctx, {
     type: 'line',
     data: {
       labels: dateLabels,
       datasets: [
-        { label:'累計市值', data: cumulVal, borderColor:'#1a78ff', borderWidth:2, pointRadius:2, fill:true, backgroundColor:'rgba(26,120,255,0.07)', tension:0.3 },
-        { label:'累計成本', data: cumulCost, borderColor:'#9090b8', borderWidth:1.5, pointRadius:0, fill:false, tension:0.3, borderDash:[4,3] },
+        {
+          label: '累計市值／預測市值',
+          data: cumulVal,
+          borderColor: ctx2 => {
+            // gradient: blue for past, gold for future
+            const chart = ctx2.chart;
+            const { ctx: c, chartArea } = chart;
+            if (!chartArea) return '#1a78ff';
+            const grad = c.createLinearGradient(chartArea.left, 0, chartArea.right, 0);
+            const pastRatio = pastDates.length / Math.max(dateLabels.length, 1);
+            grad.addColorStop(0, '#1a78ff');
+            grad.addColorStop(Math.min(pastRatio, 0.99), '#1a78ff');
+            grad.addColorStop(Math.min(pastRatio + 0.001, 1), '#c8a84b');
+            grad.addColorStop(1, '#c8a84b');
+            return grad;
+          },
+          borderWidth: 2,
+          pointRadius: 3,
+          pointBackgroundColor: ptColors,
+          fill: true,
+          backgroundColor: 'rgba(26,120,255,0.06)',
+          tension: 0.3,
+        },
+        {
+          label: '累計成本',
+          data: cumulCost,
+          borderColor: '#505070',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          fill: false,
+          tension: 0.3,
+          borderDash: [5, 4],
+        },
       ]
     },
     options: {
-      responsive:true, maintainAspectRatio:false,
+      responsive: true, maintainAspectRatio: false,
       plugins: {
-        legend:{ labels:{ color:'#7878a0', font:{ family:'DM Mono', size:10 } } },
-        tooltip:{ mode:'index', intersect:false, callbacks:{ label: c => ` NT$ ${c.parsed.y.toLocaleString('zh-TW',{maximumFractionDigits:0})}` } }
+        legend: { labels: { color: '#7878a0', font: { family: 'DM Mono', size: 11 } } },
+        tooltip: {
+          mode: 'index', intersect: false,
+          callbacks: {
+            title: items => {
+              const lbl = items[0]?.label || '';
+              return lbl.includes('★') ? lbl + '（預測）' : lbl;
+            },
+            label: c => ` ${c.dataset.label}: NT$ ${c.parsed.y.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}`
+          }
+        },
       },
       scales: {
-        x: { ticks:{ color:'#5a5a7a', font:{family:'DM Mono',size:9}, maxTicksLimit:12 }, grid:{ color:'rgba(255,255,255,0.04)' } },
-        y: { ticks:{ color:'#5a5a7a', font:{family:'DM Mono',size:9}, callback: v => 'NT$'+v.toLocaleString('zh-TW',{notation:'compact'}) }, grid:{ color:'rgba(255,255,255,0.04)' } }
+        x: { ticks: { color: '#5a5a7a', font: { family: 'DM Mono', size: 9 }, maxRotation: 45, maxTicksLimit: 14 }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { ticks: { color: '#5a5a7a', font: { family: 'DM Mono', size: 9 }, callback: v => 'NT$' + v.toLocaleString('zh-TW', { notation: 'compact' }) }, grid: { color: 'rgba(255,255,255,0.04)' } }
       }
     }
   });
+
+  if (calcBtn) { calcBtn.textContent = '📈 計算'; calcBtn.disabled = false; }
 }
 
 // ============================================================
