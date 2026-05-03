@@ -27,7 +27,8 @@
     <nav class="desktop-nav">
       <button class="nav-btn active" data-tab="portfolio" onclick="switchTab('portfolio')">📊 證券帳戶</button>
       <button class="nav-btn" data-tab="chart" onclick="switchTab('chart')">📈 大盤圖表</button>
-      <button class="nav-btn" data-tab="settings" onclick="switchTab('settings')">⚙️ 帳戶設定</button>
+      <button class="nav-btn" data-tab="tools" onclick="switchTab('tools')">🧰 分析工具</button>
+      <button class="nav-btn" data-tab="settings" onclick="switchTab('settings')">⚙️ 設定</button>
     </nav>
 
     <div class="header-right">
@@ -75,11 +76,15 @@
       <button class="btn btn-primary" onclick="openAddModal()">＋ 新增持股</button>
       <button class="btn btn-gold" id="update-prices-btn" onclick="updateAllPrices()">⚡ 一鍵更新股價</button>
       <div class="toolbar-right">
-        <button class="btn btn-sm" onclick="exportData()" title="匯出 JSON">⬇ 匯出</button>
+        <button class="btn btn-sm" onclick="exportCSV()" title="匯出 CSV">📤 CSV</button>
+        <button class="btn btn-sm" onclick="exportData()" title="匯出 JSON">⬇ JSON</button>
         <label class="btn btn-sm" style="cursor:pointer" title="匯入 JSON">⬆ 匯入<input type="file" accept=".json" style="display:none" onchange="importData(event)"></label>
         <span class="last-upd" id="last-upd-text"></span>
       </div>
     </div>
+
+    <!-- Target Price Alerts Banner -->
+    <div id="target-alerts-banner" style="display:none;margin-bottom:12px"></div>
 
     <!-- Holdings Table -->
     <div class="table-wrap">
@@ -211,6 +216,160 @@
     </div>
   </div>
 
+  <!-- ==================== TAB: TOOLS ==================== -->
+  <div id="tab-tools" class="tab-panel">
+
+    <!-- Sub-nav -->
+    <div class="tools-subnav">
+      <button class="tool-snav active" data-tool="pie"     onclick="switchTool('pie',this)">🥧 資產配置圓餅圖</button>
+      <button class="tool-snav"        data-tool="compare" onclick="switchTool('compare',this)">📊 績效比較基準</button>
+      <button class="tool-snav"        data-tool="dca"     onclick="switchTool('dca',this)">📅 定期定額計算器</button>
+      <button class="tool-snav"        data-tool="alerts"  onclick="switchTool('alerts',this)">🎯 目標價格警報</button>
+      <button class="tool-snav"        data-tool="news"    onclick="switchTool('news',this)">📰 股票新聞摘要</button>
+    </div>
+
+    <!-- ── PIE CHART ── -->
+    <div class="tool-panel active" id="tool-pie">
+      <div class="section-hd"><h2>🥧 資產配置圓餅圖</h2><div class="section-hd-line"></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select class="settings-select" id="pie-mode" onchange="renderPieChart()">
+            <option value="cost">以投入成本</option>
+            <option value="value">以目前市值</option>
+          </select>
+        </div>
+      </div>
+      <div class="two-col-layout">
+        <div class="chart-block" style="padding:24px;display:flex;align-items:center;justify-content:center;min-height:320px">
+          <canvas id="pie-canvas" style="max-width:300px;max-height:300px"></canvas>
+        </div>
+        <div id="pie-legend" class="pie-legend-wrap"></div>
+      </div>
+      <div class="pie-empty" id="pie-empty">
+        <div class="empty-state"><div class="es-icon">🥧</div><p>新增持股後即可看到資產配置圖</p></div>
+      </div>
+    </div>
+
+    <!-- ── PERFORMANCE COMPARE ── -->
+    <div class="tool-panel" id="tool-compare">
+      <div class="section-hd"><h2>📊 績效比較基準</h2><div class="section-hd-line"></div>
+        <button class="btn btn-gold btn-sm" onclick="runCompare()">🔄 立即比較</button>
+      </div>
+      <div style="margin-bottom:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <div style="font-family:var(--ff-mono);font-size:11px;color:var(--text-lo)">比較基準：</div>
+        <label style="display:flex;align-items:center;gap:6px;font-family:var(--ff-ui);font-size:13px;cursor:pointer">
+          <input type="radio" name="benchmark" value="^TWII" checked> 台灣加權指數 (^TWII)
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-family:var(--ff-ui);font-size:13px;cursor:pointer">
+          <input type="radio" name="benchmark" value="0050.TW"> 元大台灣50 (0050.TW)
+        </label>
+      </div>
+      <div class="chart-block" style="padding:20px;min-height:200px;position:relative">
+        <div id="compare-loading" style="display:none;text-align:center;padding:40px;font-family:var(--ff-mono);font-size:12px;color:var(--text-lo)">
+          <div class="loading-bar" style="margin:0 auto 12px"><div class="loading-bar-inner"></div></div>抓取基準資料中…
+        </div>
+        <div id="compare-result"></div>
+      </div>
+      <canvas id="compare-canvas" style="margin-top:12px;max-height:300px"></canvas>
+    </div>
+
+    <!-- ── DCA CALCULATOR ── -->
+    <div class="tool-panel" id="tool-dca">
+      <div class="section-hd"><h2>📅 定期定額計算器</h2><div class="section-hd-line"></div></div>
+      <div class="two-col-layout" style="align-items:flex-start">
+        <div class="settings-card" style="flex:1">
+          <h3>⚙️ 參數設定</h3>
+          <div class="form-group" style="margin-bottom:12px">
+            <label class="form-label">股票代碼</label>
+            <input class="form-input" id="dca-symbol" type="text" placeholder="如 0050.TW" value="0050.TW">
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">每月投入 (NT$)</label>
+              <input class="form-input" id="dca-monthly" type="number" placeholder="如 10000" min="100" value="10000">
+            </div>
+            <div class="form-group">
+              <label class="form-label">開始日期</label>
+              <input class="form-input" id="dca-start" type="date">
+            </div>
+          </div>
+          <div class="form-row" style="margin-top:12px">
+            <div class="form-group">
+              <label class="form-label">每月投入日</label>
+              <select class="form-input" id="dca-day">
+                <option value="1">每月 1 日</option>
+                <option value="5">每月 5 日</option>
+                <option value="10">每月 10 日</option>
+                <option value="15" selected>每月 15 日</option>
+                <option value="20">每月 20 日</option>
+                <option value="25">每月 25 日</option>
+              </select>
+            </div>
+            <div class="form-group" style="display:flex;align-items:flex-end">
+              <button class="btn btn-gold" style="width:100%" onclick="runDCA()">📈 計算</button>
+            </div>
+          </div>
+        </div>
+        <div style="flex:1.5;display:flex;flex-direction:column;gap:12px">
+          <div class="dca-summary-grid" id="dca-summary" style="display:none">
+            <div class="dca-stat"><div class="dca-stat-label">總投入金額</div><div class="dca-stat-val" id="dca-total-cost">—</div></div>
+            <div class="dca-stat"><div class="dca-stat-label">平均成本</div><div class="dca-stat-val" id="dca-avg-cost">—</div></div>
+            <div class="dca-stat"><div class="dca-stat-label">總持有股數</div><div class="dca-stat-val" id="dca-total-shares">—</div></div>
+            <div class="dca-stat"><div class="dca-stat-label">目前市值</div><div class="dca-stat-val" id="dca-current-val">—</div></div>
+            <div class="dca-stat"><div class="dca-stat-label">損益</div><div class="dca-stat-val" id="dca-pnl">—</div></div>
+            <div class="dca-stat"><div class="dca-stat-label">報酬率</div><div class="dca-stat-val" id="dca-return">—</div></div>
+          </div>
+          <div class="chart-block" style="padding:12px;min-height:200px">
+            <canvas id="dca-canvas"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── TARGET ALERTS ── -->
+    <div class="tool-panel" id="tool-alerts">
+      <div class="section-hd"><h2>🎯 目標價格警報</h2><div class="section-hd-line"></div>
+        <button class="btn btn-gold btn-sm" onclick="updateAllPricesAndCheck()">⚡ 更新並檢查</button>
+      </div>
+      <p style="font-family:var(--ff-mono);font-size:11px;color:var(--text-lo);margin-bottom:14px">
+        為每支持股設定目標賣出價與停損價，更新股價後自動提醒。
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>股票</th>
+              <th>現價</th>
+              <th>🎯 目標賣出價</th>
+              <th>🛑 停損價</th>
+              <th>狀態</th>
+              <th>儲存</th>
+            </tr>
+          </thead>
+          <tbody id="alerts-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── NEWS ── -->
+    <div class="tool-panel" id="tool-news">
+      <div class="section-hd"><h2>📰 股票新聞摘要</h2><div class="section-hd-line"></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input class="symbol-input" id="news-symbol" type="text" placeholder="代碼 或 留空=全持股" maxlength="16" style="width:180px">
+          <button class="btn btn-gold btn-sm" onclick="fetchNews()">🔍 搜尋新聞</button>
+        </div>
+      </div>
+      <div id="news-loading" style="display:none;text-align:center;padding:40px;font-family:var(--ff-mono);font-size:12px;color:var(--text-lo)">
+        <div class="loading-bar" style="margin:0 auto 12px"><div class="loading-bar-inner"></div></div>抓取新聞中…
+      </div>
+      <div id="news-list" class="news-list"></div>
+      <div id="news-empty" class="empty-state" style="display:none">
+        <div class="es-icon">📰</div>
+        <p>點擊「搜尋新聞」載入相關新聞<br>或新增持股後自動顯示持股新聞</p>
+      </div>
+    </div>
+
+  </div>
+
   <!-- ==================== TAB: SETTINGS ==================== -->
   <div id="tab-settings" class="tab-panel">
 
@@ -309,38 +468,6 @@
       </div>
     </div>
 
-    <!-- Suggestions -->
-    <div class="divider"></div>
-    <div class="section-hd">
-      <h2>💡 功能建議</h2>
-      <div class="section-hd-line"></div>
-    </div>
-    <div class="suggestions-grid">
-      <div class="suggestion-card">
-        <div class="sg-title">📅 定期定額計算器</div>
-        <div class="sg-desc">輸入每月投入金額與日期，自動計算定期定額的平均成本與報酬率變化趨勢。</div>
-      </div>
-      <div class="suggestion-card">
-        <div class="sg-title">🎯 目標價格警報</div>
-        <div class="sg-desc">為每支股票設定目標賣價與停損價，達到目標時自動顯示醒目提示。</div>
-      </div>
-      <div class="suggestion-card">
-        <div class="sg-title">🥧 資產配置圓餅圖</div>
-        <div class="sg-desc">視覺化顯示各持股佔總資產的比例，快速掌握投資組合分配狀況。</div>
-      </div>
-      <div class="suggestion-card">
-        <div class="sg-title">📰 股票新聞摘要</div>
-        <div class="sg-desc">整合持股相關新聞，讓你不離開這個頁面就能掌握最新市場動態。</div>
-      </div>
-      <div class="suggestion-card">
-        <div class="sg-title">📊 績效比較基準</div>
-        <div class="sg-desc">將你的持股報酬率與 0050 大盤基準進行比較，了解是否超越大盤表現。</div>
-      </div>
-      <div class="suggestion-card">
-        <div class="sg-title">📤 CSV 匯出</div>
-        <div class="sg-desc">將交易紀錄匯出為 Excel/CSV 格式，方便報稅或與其他工具整合分析。</div>
-      </div>
-    </div>
   </div>
 
 </main>
@@ -350,15 +477,19 @@
   <div class="mob-nav-inner">
     <button class="mob-btn active" data-tab="portfolio" onclick="switchTab('portfolio')">
       <span class="mb-icon">📊</span>
-      <span>證券帳戶</span>
+      <span>帳戶</span>
     </button>
     <button class="mob-btn" data-tab="chart" onclick="switchTab('chart')">
       <span class="mb-icon">📈</span>
-      <span>大盤圖表</span>
+      <span>圖表</span>
+    </button>
+    <button class="mob-btn" data-tab="tools" onclick="switchTab('tools')">
+      <span class="mb-icon">🧰</span>
+      <span>分析</span>
     </button>
     <button class="mob-btn" data-tab="settings" onclick="switchTab('settings')">
       <span class="mb-icon">⚙️</span>
-      <span>帳戶設定</span>
+      <span>設定</span>
     </button>
   </div>
 </nav>
@@ -401,6 +532,17 @@
       <div class="form-group">
         <label class="form-label">入場日期（自動抓取當天收盤價）</label>
         <input class="form-input" id="input-date" type="date" onchange="onDateChange()">
+      </div>
+      <!-- Target alerts -->
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">🎯 目標賣出價</label>
+          <input class="form-input" id="input-target" type="number" placeholder="選填，達標時提醒" step="0.01" min="0">
+        </div>
+        <div class="form-group">
+          <label class="form-label">🛑 停損價</label>
+          <input class="form-input" id="input-stoploss" type="number" placeholder="選填，跌破時提醒" step="0.01" min="0">
+        </div>
       </div>
       <!-- Notes -->
       <div class="form-group">
@@ -596,6 +738,7 @@ async function updateAllPrices() {
 
   saveState();
   renderPortfolio();
+  checkAllAlerts();
   btn.textContent = '⚡ 一鍵更新股價'; btn.disabled = false;
   dot.style.background = 'var(--down)';
 
@@ -1029,7 +1172,7 @@ function openAddModal() {
   document.getElementById('modal-title').textContent = '新增持股';
   document.getElementById('holding-form-body')?.reset?.();
   // Reset fields manually
-  ['input-symbol','input-name','input-cost','input-avgprice','input-shares','input-date','input-notes']
+  ['input-symbol','input-name','input-cost','input-avgprice','input-shares','input-date','input-notes','input-target','input-stoploss']
     .forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
   document.getElementById('input-avgprice').placeholder = '填入日期後自動抓取';
   selectedColor = '#1a78ff';
@@ -1052,6 +1195,8 @@ function openEditModal(id) {
   document.getElementById('input-shares').value    = h.shares  || '';
   document.getElementById('input-date').value      = h.date    || '';
   document.getElementById('input-notes').value     = h.notes   || '';
+  document.getElementById('input-target').value    = h.targetPrice || '';
+  document.getElementById('input-stoploss').value  = h.stopLoss    || '';
   selectedColor = h.color || '#1a78ff';
   uploadedImageBase64 = h.image || null;
   document.getElementById('color-custom-input').value = selectedColor;
@@ -1089,14 +1234,16 @@ async function saveHolding() {
 
   const data = {
     symbol,
-    name:     document.getElementById('input-name').value.trim(),
-    cost:     parseFloat(document.getElementById('input-cost').value) || 0,
+    name:        document.getElementById('input-name').value.trim(),
+    cost:        parseFloat(document.getElementById('input-cost').value) || 0,
     avgPrice,
-    shares:   parseFloat(document.getElementById('input-shares').value) || 0,
+    shares:      parseFloat(document.getElementById('input-shares').value) || 0,
     date,
-    notes:    document.getElementById('input-notes').value.trim(),
-    color:    selectedColor,
-    image:    uploadedImageBase64,
+    notes:       document.getElementById('input-notes').value.trim(),
+    color:       selectedColor,
+    image:       uploadedImageBase64,
+    targetPrice: parseFloat(document.getElementById('input-target').value) || null,
+    stopLoss:    parseFloat(document.getElementById('input-stoploss').value) || null,
   };
 
   if (editingId) updateHolding(editingId, data);
@@ -1169,8 +1316,433 @@ function handleImageUpload(event) {
 }
 
 // ============================================================
-//  DATA EXPORT / IMPORT
+//  CSV EXPORT
 // ============================================================
+function exportCSV() {
+  const headers = ['股票代碼','股票名稱','投入成本(NT$)','均價','股數','現價','損益(NT$)','報酬率%','入場日期','目標賣出價','停損價','備註'];
+  const rows = state.holdings.map(h => {
+    const cv  = (h.currentPrice != null && h.shares) ? h.currentPrice * h.shares : null;
+    const pnl = cv != null ? cv - (+(h.cost)||0) : '';
+    const ret = (h.cost && pnl !== '') ? ((pnl / h.cost)*100).toFixed(2) : '';
+    return [
+      h.symbol, h.name||'', h.cost||'', h.avgPrice||'', h.shares||'',
+      h.currentPrice||'', pnl !== '' ? pnl.toFixed(0) : '', ret,
+      h.date||'', h.targetPrice||'', h.stopLoss||'', h.notes||''
+    ].map(v => `"${String(v).replace(/"/g,'""')}"`).join(',');
+  });
+  const csv = '\uFEFF' + [headers.join(','), ...rows].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = `mpower_stock_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ============================================================
+//  TOOLS SUB-NAV
+// ============================================================
+function switchTool(tool, btn) {
+  document.querySelectorAll('.tool-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tool-snav').forEach(b => b.classList.remove('active'));
+  document.getElementById(`tool-${tool}`)?.classList.add('active');
+  if (btn) btn.classList.add('active');
+
+  if (tool === 'pie')     renderPieChart();
+  if (tool === 'alerts')  renderAlertsTable();
+  if (tool === 'news')    { if (!document.getElementById('news-list').children.length) fetchNews(); }
+  if (tool === 'compare') runCompare();
+}
+
+// ============================================================
+//  PIE CHART
+// ============================================================
+let pieChartInstance = null;
+function renderPieChart() {
+  const mode = document.getElementById('pie-mode')?.value || 'cost';
+  const holdings = state.holdings.filter(h => mode === 'cost' ? h.cost > 0 : (h.currentPrice && h.shares));
+
+  document.getElementById('pie-empty').style.display  = holdings.length ? 'none' : 'block';
+  document.getElementById('pie-legend').innerHTML = '';
+
+  if (!holdings.length) { if(pieChartInstance){pieChartInstance.destroy();pieChartInstance=null;} return; }
+
+  const labels = holdings.map(h => h.symbol + (h.name ? ` ${h.name}` : ''));
+  const data   = holdings.map(h => mode === 'cost' ? (+(h.cost)||0) : h.currentPrice * h.shares);
+  const colors = holdings.map(h => h.color || '#1a78ff');
+  const total  = data.reduce((a,b) => a+b, 0);
+
+  const ctx = document.getElementById('pie-canvas').getContext('2d');
+  if (pieChartInstance) { pieChartInstance.destroy(); pieChartInstance = null; }
+
+  pieChartInstance = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{ data, backgroundColor: colors, borderColor: 'rgba(0,0,0,0.3)', borderWidth: 2, hoverOffset: 8 }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      cutout: '60%',
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: c => {
+              const pct = total ? ((c.parsed / total)*100).toFixed(1) : 0;
+              return ` NT$ ${c.parsed.toLocaleString('zh-TW')} (${pct}%)`;
+            }
+          }
+        }
+      }
+    }
+  });
+
+  // Legend
+  const leg = document.getElementById('pie-legend');
+  leg.innerHTML = holdings.map((h, i) => {
+    const pct = total ? ((data[i]/total)*100).toFixed(1) : 0;
+    const cv  = mode === 'value' ? (h.currentPrice * h.shares) : (+(h.cost)||0);
+    const baseCost = +(h.cost)||0;
+    const pnl = (h.currentPrice && h.shares) ? (h.currentPrice * h.shares - baseCost) : null;
+    const pnlHtml = pnl != null
+      ? `<span style="color:${pnl>=0?'var(--up)':'var(--down)'}"> ${pnl>=0?'+':''}NT$ ${Math.abs(pnl).toLocaleString('zh-TW', {maximumFractionDigits:0})}</span>`
+      : '';
+    return `<div class="pie-leg-row">
+      <span class="pie-leg-dot" style="background:${colors[i]}"></span>
+      <div class="pie-leg-info">
+        <div class="pie-leg-sym">${escHtml(h.symbol)} <span class="pie-leg-name">${escHtml(h.name||'')}</span></div>
+        <div class="pie-leg-val">NT$ ${cv.toLocaleString('zh-TW',{maximumFractionDigits:0})} · <strong>${pct}%</strong>${pnlHtml}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ============================================================
+//  PERFORMANCE COMPARE
+// ============================================================
+let compareChartInstance = null;
+async function runCompare() {
+  const benchmark = document.querySelector('input[name="benchmark"]:checked')?.value || '^TWII';
+  const resultEl  = document.getElementById('compare-result');
+  const loadEl    = document.getElementById('compare-loading');
+
+  if (!state.holdings.length) {
+    resultEl.innerHTML = '<div class="empty-state"><div class="es-icon">📊</div><p>請先新增持股後再進行比較</p></div>';
+    return;
+  }
+
+  loadEl.style.display = 'block';
+  resultEl.innerHTML   = '';
+
+  // Find earliest date among holdings
+  const dates = state.holdings.map(h => h.date).filter(Boolean).sort();
+  const earliest = dates[0] || new Date(Date.now() - 365*86400*1000).toISOString().slice(0,10);
+  const startTs  = Math.floor(new Date(earliest).getTime() / 1000);
+  const endTs    = Math.floor(Date.now() / 1000);
+
+  // Fetch benchmark data
+  let benchResult = null, benchReturn = null;
+  try {
+    const url  = `https://query1.finance.yahoo.com/v8/finance/chart/${benchmark}?period1=${startTs}&period2=${endTs}&interval=1wk`;
+    const data = await yahooFetch(url);
+    const closes = data?.chart?.result?.[0]?.indicators?.quote?.[0]?.close?.filter(c => c != null);
+    if (closes && closes.length >= 2) {
+      benchReturn = ((closes[closes.length-1] - closes[0]) / closes[0]) * 100;
+      benchResult = { closes, timestamps: data.chart.result[0].timestamp };
+    }
+  } catch(e) { console.warn('Compare fetch failed', e); }
+
+  loadEl.style.display = 'none';
+
+  // Portfolio overall return
+  let portfolioReturn = null;
+  const totalCost = state.holdings.reduce((s,h) => s + (+(h.cost)||0), 0);
+  const hasValue   = state.holdings.every(h => h.currentPrice != null && h.shares);
+  if (hasValue && totalCost > 0) {
+    const totalVal  = state.holdings.reduce((s,h) => s + h.currentPrice * h.shares, 0);
+    portfolioReturn = ((totalVal - totalCost) / totalCost) * 100;
+  }
+
+  // Render comparison cards
+  const benchName = benchmark === '^TWII' ? '台灣加權指數' : '元大台灣50';
+  const beat = portfolioReturn != null && benchReturn != null ? portfolioReturn > benchReturn : null;
+
+  resultEl.innerHTML = `
+    <div class="compare-grid">
+      <div class="compare-card ${portfolioReturn != null ? (portfolioReturn>=0?'up':'down') : ''}">
+        <div class="cc-label">📊 我的投資組合</div>
+        <div class="cc-return">${portfolioReturn != null ? (portfolioReturn>=0?'+':'') + portfolioReturn.toFixed(2)+'%' : '請先更新股價'}</div>
+        <div class="cc-sub">自 ${earliest} 起</div>
+      </div>
+      <div class="compare-vs">VS</div>
+      <div class="compare-card ${benchReturn != null ? (benchReturn>=0?'up':'down') : ''}">
+        <div class="cc-label">📌 ${benchName}</div>
+        <div class="cc-return">${benchReturn != null ? (benchReturn>=0?'+':'') + benchReturn.toFixed(2)+'%' : '無法取得資料'}</div>
+        <div class="cc-sub">同期表現</div>
+      </div>
+    </div>
+    ${beat != null ? `<div class="compare-verdict ${beat ? 'beat' : 'lag'}">
+      ${beat ? '🏆 你的報酬率超越大盤！繼續保持' : '📉 大盤本期領先，考慮調整策略'}
+    </div>` : ''}
+    <div class="table-wrap" style="margin-top:14px">
+      <table>
+        <thead><tr><th>股票</th><th>投入成本</th><th>現價</th><th>損益</th><th>報酬率</th><th>vs 基準</th></tr></thead>
+        <tbody>
+          ${state.holdings.map(h => {
+            const cv  = (h.currentPrice && h.shares) ? h.currentPrice*h.shares : null;
+            const pnl = cv != null ? cv - (+(h.cost)||0) : null;
+            const ret = (h.cost && pnl!=null) ? (pnl/h.cost)*100 : null;
+            const diff = (ret!=null && benchReturn!=null) ? (ret - benchReturn) : null;
+            return `<tr>
+              <td><div class="td-sym"><span class="color-dot" style="background:${h.color||'#1a78ff'};color:${h.color||'#1a78ff'}"></span>
+                <div><div class="sym-name">${escHtml(h.symbol)}</div><div class="sym-label">${escHtml(h.name||'')}</div></div></div></td>
+              <td class="td-mono">NT$ ${(+(h.cost)||0).toLocaleString('zh-TW')}</td>
+              <td class="td-mono">${h.currentPrice ? h.currentPrice.toFixed(2) : '—'}</td>
+              <td class="td-pnl ${pnl!=null?(pnl>=0?'up':'down'):''}">${pnl!=null?(pnl>=0?'+':'')+'NT$ '+Math.abs(pnl).toLocaleString('zh-TW',{maximumFractionDigits:0}):'—'}</td>
+              <td class="td-pnl ${ret!=null?(ret>=0?'up':'down'):''}">${ret!=null?(ret>=0?'+':'')+ret.toFixed(2)+'%':'—'}</td>
+              <td class="td-pnl ${diff!=null?(diff>=0?'up':'down'):''}">${diff!=null?(diff>=0?'超越 +':'')+diff.toFixed(2)+'%':'—'}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+// ============================================================
+//  DCA CALCULATOR
+// ============================================================
+let dcaChartInstance = null;
+async function runDCA() {
+  const symbol  = document.getElementById('dca-symbol').value.trim() || '0050.TW';
+  const monthly = +(document.getElementById('dca-monthly').value) || 10000;
+  const startStr= document.getElementById('dca-start').value;
+  const day     = +(document.getElementById('dca-day').value) || 15;
+
+  if (!startStr) { alert('請選擇開始日期'); return; }
+
+  // Build monthly buy dates
+  const start = new Date(startStr);
+  const today = new Date();
+  const buyDates = [];
+  let cur = new Date(start.getFullYear(), start.getMonth(), day);
+  if (cur < start) cur.setMonth(cur.getMonth() + 1);
+  while (cur <= today) {
+    buyDates.push(new Date(cur));
+    cur.setMonth(cur.getMonth() + 1);
+  }
+  if (!buyDates.length) { alert('沒有符合條件的買入日期'); return; }
+
+  // Fetch full history
+  const startTs = Math.floor(start.getTime()/1000);
+  const endTs   = Math.floor(today.getTime()/1000);
+  let histData;
+  try {
+    const url  = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?period1=${startTs}&period2=${endTs}&interval=1d`;
+    const data = await yahooFetch(url);
+    const ts     = data?.chart?.result?.[0]?.timestamp;
+    const closes = data?.chart?.result?.[0]?.indicators?.quote?.[0]?.close;
+    if (!ts) throw new Error('no data');
+    histData = ts.map((t,i) => ({ date: new Date(t*1000), close: closes[i] })).filter(x => x.close);
+  } catch(e) {
+    alert('無法抓取歷史資料，請確認代碼'); return;
+  }
+
+  // Match each buy date to closest trading day close
+  function closestClose(dt) {
+    let best = null, bestDiff = Infinity;
+    histData.forEach(x => {
+      const diff = Math.abs(x.date - dt);
+      if (diff < bestDiff) { bestDiff = diff; best = x; }
+    });
+    return best?.close ?? null;
+  }
+
+  let totalCost = 0, totalShares = 0;
+  const cumulCost = [], cumulShares = [], cumulVal = [];
+  const dateLabels = [];
+
+  buyDates.forEach(dt => {
+    const price = closestClose(dt);
+    if (!price || price <= 0) return;
+    const shares = monthly / price;
+    totalCost   += monthly;
+    totalShares += shares;
+    cumulCost.push(totalCost);
+    cumulShares.push(totalShares);
+    cumulVal.push(totalShares * price);
+    dateLabels.push(`${dt.getFullYear()}/${dt.getMonth()+1}`);
+  });
+
+  const currentPrice = histData[histData.length-1]?.close || 0;
+  const currentVal   = totalShares * currentPrice;
+  const avgCost      = totalShares > 0 ? totalCost / totalShares : 0;
+  const pnl          = currentVal - totalCost;
+  const ret          = totalCost > 0 ? (pnl/totalCost)*100 : 0;
+
+  // Update summary cards
+  document.getElementById('dca-summary').style.display = 'grid';
+  document.getElementById('dca-total-cost').textContent  = `NT$ ${totalCost.toLocaleString('zh-TW',{maximumFractionDigits:0})}`;
+  document.getElementById('dca-avg-cost').textContent    = `NT$ ${avgCost.toFixed(2)}`;
+  document.getElementById('dca-total-shares').textContent= totalShares.toFixed(2) + ' 股';
+  document.getElementById('dca-current-val').textContent = `NT$ ${currentVal.toLocaleString('zh-TW',{maximumFractionDigits:0})}`;
+  const pnlEl = document.getElementById('dca-pnl');
+  pnlEl.textContent = `${pnl>=0?'+':''}NT$ ${Math.abs(pnl).toLocaleString('zh-TW',{maximumFractionDigits:0})}`;
+  pnlEl.className = `dca-stat-val ${pnl>=0?'up':'down'}`;
+  const retEl = document.getElementById('dca-return');
+  retEl.textContent = `${ret>=0?'+':''}${ret.toFixed(2)}%`;
+  retEl.className = `dca-stat-val ${ret>=0?'up':'down'}`;
+
+  // Chart
+  const ctx = document.getElementById('dca-canvas').getContext('2d');
+  if (dcaChartInstance) { dcaChartInstance.destroy(); dcaChartInstance = null; }
+  dcaChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: dateLabels,
+      datasets: [
+        { label:'累計市值', data: cumulVal, borderColor:'#1a78ff', borderWidth:2, pointRadius:2, fill:true, backgroundColor:'rgba(26,120,255,0.07)', tension:0.3 },
+        { label:'累計成本', data: cumulCost, borderColor:'#9090b8', borderWidth:1.5, pointRadius:0, fill:false, tension:0.3, borderDash:[4,3] },
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins: {
+        legend:{ labels:{ color:'#7878a0', font:{ family:'DM Mono', size:10 } } },
+        tooltip:{ mode:'index', intersect:false, callbacks:{ label: c => ` NT$ ${c.parsed.y.toLocaleString('zh-TW',{maximumFractionDigits:0})}` } }
+      },
+      scales: {
+        x: { ticks:{ color:'#5a5a7a', font:{family:'DM Mono',size:9}, maxTicksLimit:12 }, grid:{ color:'rgba(255,255,255,0.04)' } },
+        y: { ticks:{ color:'#5a5a7a', font:{family:'DM Mono',size:9}, callback: v => 'NT$'+v.toLocaleString('zh-TW',{notation:'compact'}) }, grid:{ color:'rgba(255,255,255,0.04)' } }
+      }
+    }
+  });
+}
+
+// ============================================================
+//  TARGET PRICE ALERTS
+// ============================================================
+function renderAlertsTable() {
+  const tbody = document.getElementById('alerts-tbody');
+  if (!state.holdings.length) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state"><div class="es-icon">🎯</div><p>新增持股後即可設定目標警報</p></div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = state.holdings.map(h => {
+    const priceText  = h.currentPrice != null ? h.currentPrice.toFixed(2) : '—';
+    const status     = getAlertStatus(h);
+    return `<tr>
+      <td><div class="td-sym">
+        <span class="color-dot" style="background:${h.color||'#1a78ff'};color:${h.color||'#1a78ff'}"></span>
+        <div><div class="sym-name">${escHtml(h.symbol)}</div><div class="sym-label">${escHtml(h.name||'')}</div></div>
+      </div></td>
+      <td class="td-mono">${priceText}</td>
+      <td><input class="form-input" type="number" step="0.01" min="0" id="alert-target-${h.id}" value="${h.targetPrice||''}" placeholder="未設定" style="width:110px;padding:6px 10px"></td>
+      <td><input class="form-input" type="number" step="0.01" min="0" id="alert-stop-${h.id}" value="${h.stopLoss||''}" placeholder="未設定" style="width:110px;padding:6px 10px"></td>
+      <td>${status}</td>
+      <td><button class="btn btn-sm btn-primary" onclick="saveAlerts('${h.id}')">儲存</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function getAlertStatus(h) {
+  if (h.currentPrice == null) return '<span style="color:var(--text-lo);font-family:var(--ff-mono);font-size:11px">尚未更新</span>';
+  if (h.targetPrice && h.currentPrice >= h.targetPrice) return '<span style="color:var(--up);font-weight:700">🎯 達到目標！</span>';
+  if (h.stopLoss    && h.currentPrice <= h.stopLoss)    return '<span style="color:var(--down);font-weight:700">🛑 觸發停損！</span>';
+  return '<span style="color:var(--text-lo);font-family:var(--ff-mono);font-size:11px">✅ 正常</span>';
+}
+
+function saveAlerts(id) {
+  const h = state.holdings.find(x => x.id === id);
+  if (!h) return;
+  h.targetPrice = parseFloat(document.getElementById(`alert-target-${id}`)?.value) || null;
+  h.stopLoss    = parseFloat(document.getElementById(`alert-stop-${id}`)?.value)   || null;
+  saveState();
+  renderAlertsTable();
+  checkAllAlerts();
+}
+
+function checkAllAlerts() {
+  const banner = document.getElementById('target-alerts-banner');
+  const alerts = [];
+  state.holdings.forEach(h => {
+    if (h.currentPrice == null) return;
+    if (h.targetPrice && h.currentPrice >= h.targetPrice)
+      alerts.push(`<div class="kd-alert show sell" style="margin-bottom:6px">🎯 <strong>${h.symbol}</strong> 現價 ${h.currentPrice.toFixed(2)} 已達目標賣出價 ${h.targetPrice.toFixed(2)}！</div>`);
+    if (h.stopLoss && h.currentPrice <= h.stopLoss)
+      alerts.push(`<div class="kd-alert show buy" style="margin-bottom:6px">🛑 <strong>${h.symbol}</strong> 現價 ${h.currentPrice.toFixed(2)} 已跌破停損價 ${h.stopLoss.toFixed(2)}！</div>`);
+  });
+  banner.style.display = alerts.length ? 'block' : 'none';
+  banner.innerHTML = alerts.join('');
+}
+
+async function updateAllPricesAndCheck() {
+  await updateAllPrices();
+  checkAllAlerts();
+  renderAlertsTable();
+}
+
+// ============================================================
+//  NEWS
+// ============================================================
+async function fetchNews() {
+  const symInput = document.getElementById('news-symbol').value.trim().toUpperCase();
+  const symbols  = symInput ? [symInput] : [...new Set(state.holdings.map(h => h.symbol).filter(Boolean))];
+
+  if (!symbols.length) {
+    document.getElementById('news-empty').style.display = 'block';
+    return;
+  }
+
+  const listEl   = document.getElementById('news-list');
+  const loadEl   = document.getElementById('news-loading');
+  const emptyEl  = document.getElementById('news-empty');
+  listEl.innerHTML = '';
+  emptyEl.style.display = 'none';
+  loadEl.style.display = 'block';
+
+  const allNews = [];
+  for (const sym of symbols.slice(0, 4)) {
+    try {
+      const url  = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(sym)}&newsCount=5&quotesCount=0`;
+      const data = await yahooFetch(url);
+      const news = data?.news || [];
+      news.forEach(n => { if (!allNews.find(x => x.uuid === n.uuid)) allNews.push({ ...n, _sym: sym }); });
+    } catch(_) {}
+  }
+
+  loadEl.style.display = 'none';
+  if (!allNews.length) {
+    emptyEl.style.display = 'block';
+    return;
+  }
+
+  // Sort by publish time desc
+  allNews.sort((a,b) => (b.providerPublishTime||0) - (a.providerPublishTime||0));
+
+  listEl.innerHTML = allNews.slice(0,12).map(n => {
+    const dt = n.providerPublishTime
+      ? new Date(n.providerPublishTime*1000).toLocaleString('zh-TW', {month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})
+      : '';
+    const thumb = n.thumbnail?.resolutions?.[0]?.url;
+    return `<a class="news-card" href="${escHtml(n.link||'#')}" target="_blank" rel="noopener">
+      ${thumb ? `<img src="${escHtml(thumb)}" class="news-thumb" alt="" onerror="this.style.display='none'">` : '<div class="news-thumb-placeholder">📰</div>'}
+      <div class="news-body">
+        <div class="news-sym-tag">${escHtml(n._sym)}</div>
+        <div class="news-title">${escHtml(n.title||'')}</div>
+        <div class="news-meta">
+          <span>${escHtml(n.publisher||'')}</span>
+          <span>${dt}</span>
+        </div>
+      </div>
+    </a>`;
+  }).join('');
+}
+
+// Also update saveHolding to include target price fields
+
 function exportData() {
   const json = JSON.stringify(state, null, 2);
   const blob = new Blob([json], { type: 'application/json' });
