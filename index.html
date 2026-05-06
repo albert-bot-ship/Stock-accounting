@@ -621,43 +621,157 @@ function makeAbort(ms) {
   return ctrl.signal;
 }
 
-async function yahooFetch(yahooUrl) {
-  // 1) Direct (sometimes Yahoo allows CORS)
+// ============================================================
+//  PRICE FETCH — 多重備援 + 完整欄位讀取
+// ============================================================
+
+// 通用 fetch：嘗試直連 → corsproxy → allorigins，不強制要求 d.chart
+async function rawFetch(url, timeoutMs = 8000) {
+  // 1) 直連
   try {
-    const r = await fetch(yahooUrl, { signal: makeAbort(5000) });
-    if (r.ok) { const d = await r.json(); if (d?.chart) return d; }
+    const r = await fetch(url, { signal: makeAbort(timeoutMs) });
+    if (r.ok) { const d = await r.json(); if (d) return d; }
   } catch(_) {}
 
   // 2) corsproxy.io
   try {
-    const r = await fetch(`https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`, { signal: makeAbort(10000) });
-    if (r.ok) { const d = await r.json(); if (d?.chart) return d; }
+    const r = await fetch(`https://corsproxy.io/?${encodeURIComponent(url)}`, { signal: makeAbort(12000) });
+    if (r.ok) { const d = await r.json(); if (d) return d; }
   } catch(_) {}
 
-  // 3) allorigins fallback (wraps response in {contents:"..."})
+  // 3) allorigins (wraps in {contents:"..."})
   try {
-    const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(yahooUrl)}`, { signal: makeAbort(12000) });
+    const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`, { signal: makeAbort(14000) });
     if (r.ok) {
-      const wrapper = await r.json();
-      const d = JSON.parse(wrapper.contents);
-      if (d?.chart) return d;
+      const w = await r.json();
+      if (w?.contents) return JSON.parse(w.contents);
     }
   } catch(_) {}
 
-  // 4) thingproxy last resort
-  try {
-    const r = await fetch(`https://thingproxy.freeboard.io/fetch/${yahooUrl}`, { signal: makeAbort(12000) });
-    if (r.ok) return r.json();
-  } catch(_) {}
+  return null;
+}
 
+// 舊版 yahooFetch 只給 chart 用（保持向下相容）
+async function yahooFetch(yahooUrl) {
+  const d = await rawFetch(yahooUrl);
+  if (d?.chart) return d;
   throw new Error('無法連線到 Yahoo Finance，請確認網路連線是否正常');
 }
 
+// 取當前股價：同時嘗試 /quote + /chart，多個欄位備援
 async function fetchCurrentPrice(symbol) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1d`;
-  const data = await yahooFetch(url);
-  const meta = data?.chart?.result?.[0]?.meta;
-  return meta?.regularMarketPrice ?? null;
+  const sym = encodeURIComponent(symbol);
+
+  // ── 方法 A：v7/finance/quote（最即時）──
+  try {
+    const url  = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${sym}&fields=regularMarketPrice,currentPrice,ask,bid`;
+    const data = await rawFetch(url);
+    const q    = data?.quoteResponse?.result?.[0];
+    if (q) {
+      const p = q.regularMarketPrice ?? q.currentPrice ?? q.ask ?? q.bid;
+      if (p && p > 0) { console.log(`[A] ${symbol} = ${p}`); return p; }
+    }
+  } catch(_) {}
+
+  // ── 方法 B：v8/finance/chart（1d range）──
+  try {
+    const url  = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=1d`;
+    const data = await rawFetch(url);
+    const meta = data?.chart?.result?.[0]?.meta;
+    if (meta) {
+      const p = meta.regularMarketPrice
+             ?? meta.previousClose
+             ?? meta.chartPreviousClose;
+      if (p && p > 0) { console.log(`[B] ${symbol} = ${p}`); return p; }
+    }
+    // 也從 quote array 最後一筆取
+    const closes = data?.chart?.result?.[0]?.indicators?.quote?.[0]?.close;
+    if (closes?.length) {
+      const p = [...closes].reverse().find(c => c != null && c > 0);
+      if (p) { console.log(`[C] ${symbol} = ${p}`); return p; }
+    }
+  } catch(_) {}
+
+  // ── 方法 C：v8/finance/chart（5d range 更多歷史）──
+  try {
+    const url  = `https://query2.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=5d`;
+    const data = await rawFetch(url);
+    const closes = data?.chart?.result?.[0]?.indicators?.quote?.[0]?.close;
+    if (closes?.length) {
+      const p = [...closes].reverse().find(c => c != null && c > 0);
+      if (p) { console.log(`[D] ${symbol} = ${p}`); return p; }
+    }
+  } catch(_) {}
+
+  console.warn(`[FAIL] ${symbol} 所有方法均失敗`);
+  return null;
+}
+
+// ============================================================
+//  UPDATE ALL PRICES — 逐一更新 + 即時顯示進度
+// ============================================================
+async function updateAllPrices() {
+  const btn = document.getElementById('update-prices-btn');
+  const dot = document.getElementById('auto-refresh-dot');
+  btn.disabled = true;
+  dot.style.background = 'var(--gold)';
+
+  const total = state.holdings.length;
+  if (total === 0) {
+    btn.textContent = '⚡ 一鍵更新股價';
+    btn.disabled = false;
+    return;
+  }
+
+  let done = 0, success = 0, failed = 0;
+
+  // 逐一跑（避免 Yahoo rate limit）
+  for (const h of state.holdings) {
+    done++;
+    btn.textContent = `更新中 ${done}/${total}…`;
+
+    try {
+      const p = await fetchCurrentPrice(h.symbol);
+      if (p !== null && p > 0) {
+        h.currentPrice = p;
+        h.lastUpdated  = new Date().toLocaleTimeString('zh-TW');
+        success++;
+      } else {
+        failed++;
+        console.warn(`${h.symbol} 回傳 null/0`);
+      }
+    } catch(e) {
+      failed++;
+      console.warn(`${h.symbol} 錯誤:`, e);
+    }
+
+    // 每更新一筆就立即更新畫面，讓用戶看到即時變化
+    saveState();
+    renderPortfolio();
+
+    // 每筆之間等 400ms，避免 Yahoo rate limit
+    if (done < total) await new Promise(r => setTimeout(r, 400));
+  }
+
+  checkAllAlerts();
+  dot.style.background = failed === total ? 'var(--up)' : 'var(--down)';
+
+  const t = new Date().toLocaleTimeString('zh-TW');
+  document.getElementById('last-upd').textContent = t;
+
+  let resultMsg = `⚡ 一鍵更新股價`;
+  if (failed > 0) {
+    resultMsg = `⚡ 更新完成（${success}成功 / ${failed}失敗）`;
+    document.getElementById('last-upd-text').textContent = `${t} — ${failed} 筆更新失敗，請確認網路`;
+  } else {
+    document.getElementById('last-upd-text').textContent = `最後更新: ${t} — 全部 ${success} 筆成功`;
+  }
+
+  btn.textContent = resultMsg;
+  btn.disabled = false;
+
+  // 3 秒後還原按鈕文字
+  setTimeout(() => { btn.textContent = '⚡ 一鍵更新股價'; }, 3000);
 }
 
 async function fetchHistoricalClose(symbol, dateStr) {
@@ -715,30 +829,6 @@ function deleteHolding(id) {
   state.holdings = state.holdings.filter(h => h.id !== id);
   saveState();
   renderPortfolio();
-}
-
-async function updateAllPrices() {
-  const btn = document.getElementById('update-prices-btn');
-  btn.textContent = '更新中…'; btn.disabled = true;
-  const dot = document.getElementById('auto-refresh-dot');
-  dot.style.background = 'var(--gold)';
-
-  await Promise.all(state.holdings.map(async h => {
-    try {
-      const p = await fetchCurrentPrice(h.symbol);
-      if (p !== null) { h.currentPrice = p; h.lastUpdated = new Date().toLocaleTimeString('zh-TW'); }
-    } catch(_) {}
-  }));
-
-  saveState();
-  renderPortfolio();
-  checkAllAlerts();
-  btn.textContent = '⚡ 一鍵更新股價'; btn.disabled = false;
-  dot.style.background = 'var(--down)';
-
-  const t = new Date().toLocaleTimeString('zh-TW');
-  document.getElementById('last-upd').textContent = t;
-  document.getElementById('last-upd-text').textContent = `最後更新: ${t}`;
 }
 
 // ============================================================
