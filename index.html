@@ -708,69 +708,97 @@ async function fetchCurrentPrice(symbol) {
 }
 
 // ============================================================
-//  UPDATE ALL PRICES — 逐一更新 + 即時顯示進度
+//  UPDATE ALL PRICES — 批次一次抓全部，秒速完成
 // ============================================================
 async function updateAllPrices() {
   const btn = document.getElementById('update-prices-btn');
   const dot = document.getElementById('auto-refresh-dot');
+  btn.textContent = '⏳ 抓取中…';
   btn.disabled = true;
   dot.style.background = 'var(--gold)';
 
-  const total = state.holdings.length;
-  if (total === 0) {
+  const holdings = state.holdings;
+  if (!holdings.length) {
     btn.textContent = '⚡ 一鍵更新股價';
     btn.disabled = false;
     return;
   }
 
-  let done = 0, success = 0, failed = 0;
+  // ── 取出不重複的代碼 ──
+  const symbols = [...new Set(holdings.map(h => h.symbol).filter(Boolean))];
+  const priceMap = {}; // { symbol: price }
 
-  // 逐一跑（避免 Yahoo rate limit）
-  for (const h of state.holdings) {
-    done++;
-    btn.textContent = `更新中 ${done}/${total}…`;
-
-    try {
-      const p = await fetchCurrentPrice(h.symbol);
-      if (p !== null && p > 0) {
-        h.currentPrice = p;
-        h.lastUpdated  = new Date().toLocaleTimeString('zh-TW');
-        success++;
-      } else {
-        failed++;
-        console.warn(`${h.symbol} 回傳 null/0`);
-      }
-    } catch(e) {
-      failed++;
-      console.warn(`${h.symbol} 錯誤:`, e);
-    }
-
-    // 每更新一筆就立即更新畫面，讓用戶看到即時變化
-    saveState();
-    renderPortfolio();
-
-    // 每筆之間等 400ms，避免 Yahoo rate limit
-    if (done < total) await new Promise(r => setTimeout(r, 400));
+  // ── 方法 A：v7/quote 一次抓所有代碼（最快）──
+  try {
+    const url  = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbols.map(encodeURIComponent).join(',')}&fields=regularMarketPrice,currentPrice`;
+    const data = await rawFetch(url, 10000);
+    const results = data?.quoteResponse?.result ?? [];
+    results.forEach(q => {
+      const p = q.regularMarketPrice ?? q.currentPrice;
+      if (p && p > 0) priceMap[q.symbol] = p;
+    });
+    console.log('[批次A] 取得:', priceMap);
+  } catch(e) {
+    console.warn('批次 A 失敗', e);
   }
 
-  checkAllAlerts();
-  dot.style.background = failed === total ? 'var(--up)' : 'var(--down)';
+  // ── 方法 B：對 A 沒取到的代碼，用 chart API 並行補齊 ──
+  const missing = symbols.filter(s => !priceMap[s]);
+  if (missing.length) {
+    console.log('[批次B] 補抓:', missing);
+    await Promise.all(missing.map(async sym => {
+      try {
+        // chart API - query1
+        const url  = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=5d`;
+        const data = await rawFetch(url, 8000);
+        const meta   = data?.chart?.result?.[0]?.meta;
+        const closes = data?.chart?.result?.[0]?.indicators?.quote?.[0]?.close;
 
+        let p = meta?.regularMarketPrice ?? meta?.previousClose ?? meta?.chartPreviousClose;
+        if (!p && closes?.length) p = [...closes].reverse().find(c => c != null && c > 0);
+        if (p && p > 0) priceMap[sym] = p;
+        console.log(`[B] ${sym} =`, p);
+      } catch(e) {
+        console.warn(`[B] ${sym} 失敗`, e);
+      }
+    }));
+  }
+
+  // ── 把 priceMap 寫回 holdings ──
+  let success = 0, failed = 0;
+  const now = new Date().toLocaleTimeString('zh-TW');
+  holdings.forEach(h => {
+    // 嘗試完整代碼，也嘗試不帶後綴（如 0050.TW → 0050）
+    const p = priceMap[h.symbol]
+           ?? priceMap[h.symbol?.replace(/\.[A-Z]+$/, '')];
+    if (p) {
+      h.currentPrice = p;
+      h.lastUpdated  = now;
+      success++;
+    } else {
+      failed++;
+      console.warn(`最終失敗: ${h.symbol}`);
+    }
+  });
+
+  saveState();
+  renderPortfolio();
+  checkAllAlerts();
+
+  // ── UI 回饋 ──
+  dot.style.background = failed === holdings.length ? 'var(--up)' : 'var(--down)';
   const t = new Date().toLocaleTimeString('zh-TW');
   document.getElementById('last-upd').textContent = t;
 
-  let resultMsg = `⚡ 一鍵更新股價`;
   if (failed > 0) {
-    resultMsg = `⚡ 更新完成（${success}成功 / ${failed}失敗）`;
-    document.getElementById('last-upd-text').textContent = `${t} — ${failed} 筆更新失敗，請確認網路`;
+    btn.textContent = `⚡ ${success}筆成功 / ${failed}筆失敗`;
+    document.getElementById('last-upd-text').textContent = `${t} — ${failed} 筆更新失敗`;
   } else {
+    btn.textContent = `✅ 全部 ${success} 筆更新完成`;
     document.getElementById('last-upd-text').textContent = `最後更新: ${t} — 全部 ${success} 筆成功`;
   }
 
-  btn.textContent = resultMsg;
   btn.disabled = false;
-
-  // 3 秒後還原按鈕文字
   setTimeout(() => { btn.textContent = '⚡ 一鍵更新股價'; }, 3000);
 }
 
