@@ -1,0 +1,73 @@
+{
+  "holdings": [
+    {
+      "id": "1778951219835",
+      "symbol": "0050.TW",
+      "name": "元大台灣50",
+      "cost": 19903,
+      "avgPrice": 76.85,
+      "shares": 259,
+      "date": "2026-03-06",
+      "notes": "",
+      "color": "#5ac8fa",
+      "image": null,
+      "targetPrice": null,
+      "stopLoss": null,
+      "currentPrice": null,
+      "lastUpdated": null
+    },
+    {
+      "id": "1778951261348",
+      "symbol": "0050.TW",
+      "name": "元大台灣50",
+      "cost": 1998,
+      "avgPrice": 74.25,
+      "shares": 27,
+      "date": "2026-03-23",
+      "notes": "",
+      "color": "#5ac8fa",
+      "image": null,
+      "targetPrice": null,
+      "stopLoss": null,
+      "currentPrice": null,
+      "lastUpdated": null
+    },
+    {
+      "id": "1778951326939",
+      "symbol": "0050.TW",
+      "name": "元大台灣50",
+      "cost": 1983,
+      "avgPrice": 75.8,
+      "shares": 26,
+      "date": "2026-03-26",
+      "notes": "",
+      "color": "#1a78ff",
+      "image": null,
+      "targetPrice": null,
+      "stopLoss": null,
+      "currentPrice": null,
+      "lastUpdated": null
+    },
+    {
+      "id": "1778951358049",
+      "symbol": "0050.TW",
+      "name": "元大台灣50",
+      "cost": 1963,
+      "avgPrice": 93,
+      "shares": 21,
+      "date": "2026-04-27",
+      "notes": "",
+      "color": "#5ac8fa",
+      "image": null,
+      "targetPrice": null,
+      "stopLoss": null,
+      "currentPrice": null,
+      "lastUpdated": null
+    }
+  ],
+  "settings": {
+    "autoRefreshMinutes": 5,
+    "kdBuyThreshold": 20,
+    "kdSellThreshold": 80
+  }
+}
